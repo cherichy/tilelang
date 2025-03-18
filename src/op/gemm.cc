@@ -139,7 +139,6 @@ Stmt Gemm::Lower(const LowerArgs &T, arith::Analyzer *analyzer) const {
     ss << ", " << kPack;
   } else if (TargetIsHopper(T.target)) {
     ss << ", " << (maybe_wgmma ? "true" : "false");
-    // ss << ","  << (maybe_wgmma && keep_accum ? "true" : "false");
   }
   ss << ">";
   auto A_buffer = T.buffer_remap.count(A) ? T.buffer_remap[A] : A;

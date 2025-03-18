@@ -125,22 +125,42 @@ std::string CodeGenTileLangCUDA::Finish() {
 }
 
 void CodeGenTileLangCUDA::VisitStmt_(const tir::ForNode *op) {
+
+  std::string extent =
+      PrintExpr(arith::Analyzer().Simplify(op->extent + op->min));
+
+  std::string vid = AllocVarID(op->loop_var.get());
+  std::string start = PrintExpr(op->min);
+
+  PrintIndent();
+  stream <<"{\n";
+  PrintIndent();
+  stream << "auto loop_body = [&](";
+  PrintType(op->loop_var.dtype(), stream);
+  stream << " " << vid << "){\n";
+  PrintStmt(op->body);
+  PrintIndent();
+  stream << "};\n";
+
+  PrintIndent();
+  stream << "loop_body("<<start<<");\n";
+
   if (op->kind == tir::ForKind::kUnrolled) {
     PrintIndent();
     stream << "#pragma unroll\n";
   }
-  std::string extent =
-      PrintExpr(arith::Analyzer().Simplify(op->extent + op->min));
   PrintIndent();
-  std::string vid = AllocVarID(op->loop_var.get());
-  std::string start = PrintExpr(op->min);
   stream << "for (";
   PrintType(op->loop_var.dtype(), stream);
-  stream << ' ' << vid << " = " << start << "; " << vid << " < " << extent
+  stream << ' ' << vid << " = " << start << "+1; " << vid << " < " << extent
          << "; ++" << vid << ") {\n";
   int for_scope = BeginScope();
-  PrintStmt(op->body);
+  PrintIndent();
+  stream << "loop_body("<<vid<<");\n";
   this->EndScope(for_scope);
+  PrintIndent();
+  stream << "}\n";
+
   PrintIndent();
   stream << "}\n";
 }
