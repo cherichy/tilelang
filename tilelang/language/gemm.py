@@ -12,6 +12,7 @@ def gemm(
     C: tir.Buffer,
     transpose_A: bool = False,
     transpose_B: bool = False,
+    keep_accum: bool = True,
     policy: GemmWarpPolicy = GemmWarpPolicy.Square,
     k_pack: int = 1,
 ):
@@ -36,6 +37,7 @@ def gemm(
         Cptr,
         transpose_A,
         transpose_B,
+        keep_accum,
         M,
         N,
         K,

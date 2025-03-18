@@ -42,12 +42,13 @@ Gemm::Gemm(Array<PrimExpr> args, BufferMap vmap) {
   C = vmap[GetVarFromAccessPtr(args[2])];
   trans_A = args[3].as<Bool>().value();
   trans_B = args[4].as<Bool>().value();
-  M = args[5].as<IntImm>().value()->value;
-  N = args[6].as<IntImm>().value()->value;
-  K = args[7].as<IntImm>().value()->value;
-  policy = static_cast<GemmWarpPolicy>(args[8].as<IntImm>().value()->value);
-  if (args.size() > 9) {
-    kPack = args[9].as<IntImm>().value()->value;
+  keep_accum = args[5].as<Bool>().value();
+  M = args[6].as<IntImm>().value()->value;
+  N = args[7].as<IntImm>().value()->value;
+  K = args[8].as<IntImm>().value()->value;
+  policy = static_cast<GemmWarpPolicy>(args[9].as<IntImm>().value()->value);
+  if (args.size() > 10) {
+    kPack = args[10].as<IntImm>().value()->value;
     if (kPack != 1 && kPack != 2) {
       ICHECK(false) << "kPack must be 1 or 2";
     }
@@ -114,6 +115,10 @@ Stmt Gemm::Lower(const LowerArgs &T, arith::Analyzer *analyzer) const {
 
   bool maybe_wgmma = TargetIsHopper(T.target) && (this->M >= 64) &&
                      (T.block_size / warp_size % 4 == 0);
+  if (!maybe_wgmma) {
+    ICHECK(keep_accum == false)
+        << "Only wgmma support keep_accum, but wgmma is not enabled";
+  }
 
   auto [warp_m, warp_n] =
       ComputeWarpPartition(T.block_size / warp_size, T.target, maybe_wgmma);
@@ -134,6 +139,7 @@ Stmt Gemm::Lower(const LowerArgs &T, arith::Analyzer *analyzer) const {
     ss << ", " << kPack;
   } else if (TargetIsHopper(T.target)) {
     ss << ", " << (maybe_wgmma ? "true" : "false");
+    // ss << ","  << (maybe_wgmma && keep_accum ? "true" : "false");
   }
   ss << ">";
   auto A_buffer = T.buffer_remap.count(A) ? T.buffer_remap[A] : A;
@@ -145,6 +151,9 @@ Stmt Gemm::Lower(const LowerArgs &T, arith::Analyzer *analyzer) const {
   new_args.push_back(A_buffer.access_ptr(1));
   new_args.push_back(B_buffer.access_ptr(1));
   new_args.push_back(C_buffer.access_ptr(3));
+  if (maybe_wgmma) {
+    new_args.push_back(Bool(keep_accum));
+  }
   auto new_call = Call(DataType::Handle(), builtin::call_extern(), new_args);
   return Evaluate(new_call);
 }
@@ -302,7 +311,7 @@ LayoutMap Gemm::InferLayout(const LayoutInferArgs &T, InferLevel level) {
 }
 
 TIR_REGISTER_TL_OP(Gemm, gemm)
-    .set_num_inputs(5)
+    .set_num_inputs(6)
     .set_attr<TCallEffectKind>("TCallEffectKind",
                                Integer(CallEffectKind::kOpaque));
 

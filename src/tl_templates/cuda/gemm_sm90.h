@@ -52,7 +52,7 @@ public:
   static_assert(num_warp_m % 4 == 0, "num_warp_m must be a multiple of 4");
 
   template <int wg_wait = 0>
-  static CUTE_DEVICE void body(A_type_raw *pA, B_type_raw *pB, C_type_raw *pC) {
+  static CUTE_DEVICE void body(A_type_raw *pA, B_type_raw *pB, C_type_raw *pC, bool keep_accum=true) {
     const int tid = threadIdx.x;
     Tensor sA = make_tensor(make_smem_ptr(reinterpret_cast<A_type *>(pA)),
                             SmemLayoutA{});
@@ -71,7 +71,7 @@ public:
     Tensor tCsB = thr_mma.partition_B(sB); // (MMA,MMA_N,MMA_K,PIPE)
 
     Tensor tCrA = thr_mma.make_fragment_A(tCsA); // (MMA,MMA_N,MMA_K,PIPE)
-    Tensor tCrB = thr_mma.make_fragment_B(tCsB); // (MMA,MMA_M,MMA_N,PIPE)
+    Tensor tCrB = thr_mma.make_fragment_B(tCsB); // (MMA,MMA_M,MMA_K,PIPE)
 
     Tensor acc =
         make_tensor(make_rmem_ptr(reinterpret_cast<C_type *>(pC)),
@@ -79,6 +79,7 @@ public:
 
     warpgroup_fence_operand(acc);
     warpgroup_arrive();
+    tiled_mma.accumulate_ = keep_accum ? GMMA::ScaleOut::One : GMMA::ScaleOut::Zero;
     CUTLASS_PRAGMA_UNROLL
     for (int k_block = 0; k_block < size<2>(tCrA); ++k_block) {
       // warpgroup_arrive();
@@ -104,7 +105,7 @@ public:
 
   template <int wg_wait = 0>
   static CUTE_DEVICE void body_rs(A_type_raw *pA, B_type_raw *pB,
-                                  C_type_raw *pC) {
+                                  C_type_raw *pC, bool keep_accum=true) {
     // TODO: Move bar.sync out of body_rs
     // asm volatile("bar.sync %0, %1;" : : "r"(1), "r"(num_warp_m * num_warp_n *
     // 32));
@@ -121,7 +122,7 @@ public:
 
     // Allocate registers for pipelining
     Tensor tCsB = thr_mma.partition_B(sB);       // (MMA,MMA_N,MMA_K,PIPE)
-    Tensor tCrB = thr_mma.make_fragment_B(tCsB); // (MMA,MMA_M,MMA_N,PIPE)
+    Tensor tCrB = thr_mma.make_fragment_B(tCsB); // (MMA,MMA_M,MMA_K,PIPE)
     Tensor tCrA =
         make_tensor(make_rmem_ptr(reinterpret_cast<A_type *>(pA)),
                     partition_shape_A(tiled_mma, Shape<Int<M>, Int<K>>{}));
@@ -132,6 +133,7 @@ public:
     warpgroup_fence_operand(tCrA);
     warpgroup_fence_operand(acc);
     warpgroup_arrive();
+    tiled_mma.accumulate_ = keep_accum ? GMMA::ScaleOut::One : GMMA::ScaleOut::Zero;
     CUTLASS_PRAGMA_UNROLL
     for (int k_block = 0; k_block < size<2>(tCrA); ++k_block) {
       // warpgroup_arrive();
@@ -521,12 +523,12 @@ CUTLASS_DEVICE void gemm_sr(A_type *pA, B_type *pB, C_type *accum) {
 template <int M, int N, int K, int num_warp_m, int num_warp_n, bool trans_A,
           bool trans_B, bool use_wgmma = true, int wg_wait = 0, typename A_type,
           typename B_type, typename C_type>
-TL_DEVICE void gemm_ss(A_type *pA, B_type *pB, C_type *accum) {
+TL_DEVICE void gemm_ss(A_type *pA, B_type *pB, C_type *accum, bool keep_accum) {
   if constexpr (use_wgmma) {
     using MMA =
         cute::tl_wgmma::GemmTensorOp<M, N, K, num_warp_m, num_warp_n, trans_A,
                                      trans_B, A_type, B_type, C_type>;
-    MMA::body<wg_wait>(pA, pB, accum);
+    MMA::body<wg_wait>(pA, pB, accum, keep_accum);
   } else {
     using MMA =
         cute::tl_mma::GemmTensorOp<M, N, K, num_warp_m, num_warp_n, trans_A,
@@ -538,12 +540,12 @@ TL_DEVICE void gemm_ss(A_type *pA, B_type *pB, C_type *accum) {
 template <int M, int N, int K, int num_warp_m, int num_warp_n, bool trans_A,
           bool trans_B, bool use_wgmma = true, int wg_wait = 0, typename A_type,
           typename B_type, typename C_type>
-TL_DEVICE void gemm_rs(A_type *pA, B_type *pB, C_type *accum) {
+TL_DEVICE void gemm_rs(A_type *pA, B_type *pB, C_type *accum, bool keep_accum) {
   if constexpr (use_wgmma) {
     using MMA =
         cute::tl_wgmma::GemmTensorOp<M, N, K, num_warp_m, num_warp_n, trans_A,
                                      trans_B, A_type, B_type, C_type>;
-    MMA::body_rs<wg_wait>(pA, pB, accum);
+    MMA::body_rs<wg_wait>(pA, pB, accum, keep_accum);
   } else {
     using MMA =
         cute::tl_mma::GemmTensorOp<M, N, K, num_warp_m, num_warp_n, trans_A,

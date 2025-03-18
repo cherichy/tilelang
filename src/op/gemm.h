@@ -36,7 +36,7 @@ private:
 
   Array<PrimExpr> call_args;
   tir::Buffer A, B, C;
-  bool trans_A, trans_B;
+  bool trans_A, trans_B, keep_accum;
   int M, N, K;
   // k_pack please ref to bitblas/tl/mfma_macro_generator.py::k_pack
   // only will be enabled under cdna mfma instructions
